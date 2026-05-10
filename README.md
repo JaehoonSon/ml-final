@@ -10,22 +10,21 @@ VOC has one annotation per image, so we are **not** claiming to learn multiple
 plausible human annotations. We are testing whether modeling pixel-to-pixel
 dependencies in the output mask gives cleaner samples on natural images.
 
-## Three runs
+## Three runs at a glance
 
-| Run | Model | Inference | What it shows |
+| Run | Model | Inference | Purpose |
 |---|---|---|---|
 | 1 | Deterministic U-Net | argmax (one mask) | Standard segmentation upper bound |
-| 2 | Same trained U-Net | sample from softmax per pixel (independent) | The "noisy sampling" failure mode PixelSeg motivates against |
-| 3 | PixelSeg | autoregressive PixelCNN sampling at 56×56 + decoder upsample | The proposed fix |
+| 2 | Same trained U-Net | sample softmax per pixel (independent) | The "noisy sampling" failure mode |
+| 3 | PixelSeg | autoregressive PixelCNN sampling | The proposed fix |
 
-Run 2 reuses the Run 1 checkpoint — only the inference function changes.
+Run 2 reuses Run 1's checkpoint — only the inference function changes.
 
 ## Reference baselines (advML_lab2, 21-class VOC)
 
-These numbers come from [Lstsk/advML_lab2](https://github.com/Lstsk/advML_lab2),
-included as context for how U-Net / TransUNet behave on the harder 21-class
-version of the task. They are **not directly comparable** to our binary results
-(different number of classes), but show the metric format we're matching.
+These come from [Lstsk/advML_lab2](https://github.com/Lstsk/advML_lab2) for
+context. They evaluate on **21-class** VOC, so the numbers are not directly
+comparable to our binary setup, but the metric protocol is identical.
 
 | Model | Pixel Accuracy | Mean IoU |
 |---|---:|---:|
@@ -41,163 +40,105 @@ version of the task. They are **not directly comparable** to our binary results
 | TransUNet (100 epoch, weighted, lr 1e-4) | 82.66% | 45.33% |
 | **TransUNet (100 epoch, weighted, lr 1e-5)** | **91.13%** | **62.65%** |
 
-## Our results (binary VOC, val set)
+## Our results (binary VOC, val set, to fill in after training)
 
-To be filled in after training. Same metrics, computed from a global confusion
-matrix, exactly as in advML_lab2.
+### Main comparison
 
-| Run | Method | Pixel Accuracy | Mean IoU |
-|---|---|---:|---:|
-| 1 | Deterministic U-Net (argmax) | TBD | TBD |
-| 2 | Naive softmax sampling (16 samples) | TBD | TBD |
-| 3 | PixelSeg autoregressive (16 samples) | TBD | TBD |
+| Method | Pixel Accuracy | Mean IoU |
+|---|---:|---:|
+| Run 1: Deterministic U-Net (argmax) | TBD | TBD |
+| Run 2: Naive softmax sampling (16 samples) | TBD | TBD |
+| Run 3: PixelSeg autoregressive (16 samples) | TBD | TBD |
 
-## Layout
+### PixelSeg learning-rate ablation
+
+| PixelSeg variant | Pixel Accuracy | Mean IoU |
+|---|---:|---:|
+| lr 1e-3 | TBD | TBD |
+| lr 1e-4 | TBD | TBD |
+| lr 1e-5 | TBD | TBD |
+
+## Project layout
 
 ```
 ml-final/
 ├── data/
 │   ├── prepare_voc.py        # torchvision download trigger
-│   └── dataset.py            # binarized VOC, 224x224
+│   └── dataset.py            # binarized VOC, 224x224, joint augmentations
 ├── models/
 │   ├── unet.py               # shared backbone
-│   ├── deterministic.py      # Run 1 + Run 2 (argmax / softmax sampling)
-│   └── pixelseg.py           # Run 3 (PixelCNN head, fast autoregressive sampling)
+│   ├── deterministic.py      # Run 1 + Run 2
+│   └── pixelseg.py           # Run 3
 ├── metrics.py                # ConfusionMatrix → PA, mIoU
 ├── train.py                  # --model {det, pixelseg}
 ├── evaluate.py               # --mode {det, softmax, pixelseg}
-└── README.md
+├── visualize.py              # basic side-by-side comparison figure
+└── visualize_stochastic.py   # samples grid + uncertainty heatmaps
 ```
 
-Six source files. No baseline reimplementation — context numbers come from advML_lab2.
+---
 
-## End-to-end commands (copy-paste)
+# Section 1 — Computer A: Deterministic (Run 1 + Run 2)
 
-Each block below is standalone. Run top-to-bottom for a clean overnight run.
-
-### Step 1 — One-time setup (~5 min)
-
-```bash
-uv sync
-uv run python data/prepare_voc.py
-```
-
-This installs dependencies and downloads VOC 2012 (~2 GB) to `data/voc/`.
-
-### Step 2 — Train Run 1: Deterministic U-Net (~1 hour)
-
-```bash
-uv run python train.py \
-    --model det \
-    --epochs 100 \
-    --lr 1e-4 \
-    --batch-size 16
-```
-
-Writes `runs/det/best.pt`.
-
-### Step 3 — Train Run 3: PixelSeg (~3–5 hours)
-
-```bash
-uv run python train.py \
-    --model pixelseg \
-    --epochs 100 \
-    --lr 1e-4 \
-    --batch-size 16
-```
-
-Writes `runs/pixelseg/best.pt`.
-
-### Step 4 — Evaluate all three runs (~20–40 min total)
-
-```bash
-uv run python evaluate.py --mode det
-uv run python evaluate.py --mode softmax --num-samples 16
-uv run python evaluate.py --mode pixelseg --num-samples 16
-```
-
-Each writes `runs/<model>/results_<mode>.json` and prints PA + mIoU to stdout.
-
-### Run everything sequentially (single command)
-
-If you want to kick the whole pipeline off in one command and walk away:
+Trains the U-Net once and evaluates both argmax (Run 1) and naive softmax sampling (Run 2). Wall time: ~1 h training + ~5 min eval.
 
 ```bash
 uv sync && \
 uv run python data/prepare_voc.py && \
 uv run python train.py --model det --epochs 100 --lr 1e-4 --batch-size 16 && \
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-4 --batch-size 16 && \
 uv run python evaluate.py --mode det && \
-uv run python evaluate.py --mode softmax --num-samples 16 && \
-uv run python evaluate.py --mode pixelseg --num-samples 16
+uv run python evaluate.py --mode softmax --num-samples 16
 ```
 
-### Step 5 — PixelSeg hyperparameter sweep (optional)
+**Outputs after this run finishes**:
+- `runs/det/best.pt` — checkpoint
+- `runs/det/results_det.json` — Run 1 metrics
+- `runs/det/results_softmax.json` — Run 2 metrics
 
-To showcase PixelSeg under different settings without losing earlier checkpoints, use `--tag` to give each config its own run directory:
+---
+
+# Section 2 — Computer B: PixelSeg (Run 3, three lr variants)
+
+Trains PixelSeg three times with different learning rates, then evaluates each. Wall time: ~9–15 h training + ~30–90 min eval.
 
 ```bash
-# Two PixelSeg configs, different learning rates
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-4 --tag pixelseg_lr1e-4
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-5 --tag pixelseg_lr1e-5
-
-# Evaluate each with the matching tag
-uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-4
-uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-5
+uv sync && \
+uv run python data/prepare_voc.py && \
+uv run python train.py --model pixelseg --epochs 100 --lr 1e-3 --batch-size 16 --tag pixelseg_lr1e-3 && \
+uv run python train.py --model pixelseg --epochs 100 --lr 1e-4 --batch-size 16 --tag pixelseg_lr1e-4 && \
+uv run python train.py --model pixelseg --epochs 100 --lr 1e-5 --batch-size 16 --tag pixelseg_lr1e-5 && \
+uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-3 --num-samples 16 && \
+uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-4 --num-samples 16 && \
+uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-5 --num-samples 16
 ```
 
-Each tagged run writes to `runs/<tag>/best.pt` and `runs/<tag>/results_pixelseg.json`. Without `--tag`, the default `runs/pixelseg/` is used (backwards-compatible).
+**Outputs after this run finishes**:
+- `runs/pixelseg_lr1e-3/best.pt` and `results_pixelseg.json`
+- `runs/pixelseg_lr1e-4/best.pt` and `results_pixelseg.json`
+- `runs/pixelseg_lr1e-5/best.pt` and `results_pixelseg.json`
 
-### Step 6 — Visualization
+---
 
-Three figures, in order of impact for your presentation:
+# Section 3 — After both computers finish: combine + visualize
 
-**A. Basic comparison** — one prediction per method, side by side:
+The visualization scripts need **both** the deterministic checkpoint and at least one PixelSeg checkpoint in the same `runs/` tree. Copy the missing folder over (e.g., from computer A → computer B), then run:
+
 ```bash
-uv run python visualize.py
+uv run python visualize.py --pixelseg-tag pixelseg_lr1e-5 && \
+uv run python visualize_stochastic.py --pixelseg-tag pixelseg_lr1e-5
 ```
-Output: `runs/figures/comparison.png` (4 images × [Input | GT | Det | Softmax | PixelSeg]).
 
-**B. Multiple stochastic samples** — shows that softmax samples are noisy while PixelSeg samples are coherent:
+Replace `pixelseg_lr1e-5` with whichever variant scored best. **Outputs**:
+- `runs/figures/comparison.png` — 4 images × [Input | GT | Det | Softmax | PixelSeg]
+- `runs/figures/samples.png` — 3 images × [Input | GT | softmax×4 | PixelSeg×4]
+- `runs/figures/uncertainty.png` — 3 images × [Input | GT | Softmax variance | PixelSeg variance]
+
+### Quick rsync example
+
 ```bash
-uv run python visualize_stochastic.py
+# From computer A, push the deterministic run to computer B
+rsync -avz runs/det/ user@computer-B:/path/to/ml-final/runs/det/
 ```
-Output: `runs/figures/samples.png` (3 images × [Input | GT | 4 softmax samples | 4 PixelSeg samples]).
-
-**C. Uncertainty heatmaps** — produced by the same script as B:
-
-Output: `runs/figures/uncertainty.png` (3 images × [Input | GT | Softmax variance | PixelSeg variance]).
-
-To visualize a tagged PixelSeg run instead of the default:
-```bash
-uv run python visualize.py --pixelseg-tag pixelseg_lr1e-5 --output runs/figures/lr1e-5_comparison.png
-uv run python visualize_stochastic.py --pixelseg-tag pixelseg_lr1e-5 --output-dir runs/figures/lr1e-5
-```
-
-## Hyperparameter reference
-
-| Setting | Value |
-|---|---|
-| Image size | 224×224 |
-| Low-res mask (PixelCNN domain) | 56×56 |
-| PixelCNN depth | 4 layers |
-| PixelCNN hidden | 64 |
-| Samples per image (Runs 2 and 3) | 16 |
-| Optimizer | Adam |
-| Default learning rate | 1e-4 |
-| Default epochs | 100 |
-| Default batch size | 16 |
-| Augmentation (train only) | resize 1.1× → random crop 224×224, h-flip p=0.5, brightness/contrast p=0.5 |
-
-## Expected timeline
-
-| Step | Approx. time |
-|---|---|
-| VOC download | 5–10 min |
-| Train deterministic (Run 1) | ~1 h |
-| Train PixelSeg (Run 3) | ~3–5 h |
-| Eval all three runs | ~30 min |
-| **Total** | **~5–7 h, fits one night** |
 
 ## Final claim we're testing
 

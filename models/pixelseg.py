@@ -1,16 +1,4 @@
-"""
-PixelSeg for binary Pascal VOC: U-Net + PixelCNN head with hierarchical
-(low-resolution autoregressive) modeling of the segmentation mask.
-
-    x (224x224, RGB) --> UNet --> features (224x224)
-                                      |
-                                      +--> 4x downsample --> PixelCNN @ 56x56  --> p(yhat | x)
-                                      |
-                                      +--> upsample(yhat) + features --> y (224x224, 2 classes)
-
-Inference draws stochastic samples via autoregressive multinomial sampling,
-with greedy bulk-accept of background regions for speed.
-"""
+"""PixelSeg model for binary VOC."""
 
 import torch
 import torch.nn as nn
@@ -22,12 +10,11 @@ LOW_RES = 56
 
 
 class MaskedConv2d(nn.Conv2d):
-    """Autoregressive conv. Mask 'A' zeros the center pixel; 'B' keeps it."""
-
     def __init__(self, mask_type, *args, **kwargs):
         super().__init__(*args, **kwargs)
         _, _, kH, kW = self.weight.shape
         mask = torch.ones_like(self.weight)
+        # PixelCNN mask: A excludes the current pixel, B keeps it.
         mask[:, :, kH // 2, kW // 2 + (1 if mask_type == "B" else 0):] = 0
         mask[:, :, kH // 2 + 1:, :] = 0
         self.register_buffer("mask", mask)
@@ -38,8 +25,6 @@ class MaskedConv2d(nn.Conv2d):
 
 
 class PixelCNN(nn.Module):
-    """Conditional PixelCNN. Conditioning features added at every layer."""
-
     def __init__(self, num_classes, cond_channels, hidden=64, n_layers=4, kernel_size=7):
         super().__init__()
         pad = kernel_size // 2
@@ -77,9 +62,9 @@ class PixelSeg(nn.Module):
         return F.one_hot(y, self.num_classes).permute(0, 3, 1, 2).float()
 
     def forward(self, x, y):
-        """Training forward. Returns (low_logits, high_logits, y_low) for the joint loss."""
         features = self.unet(x)
         features_low = F.adaptive_avg_pool2d(features, LOW_RES)
+        # Max-pool keeps small foreground regions from disappearing at 56x56.
         y_low = F.adaptive_max_pool2d(y.float().unsqueeze(1), LOW_RES).squeeze(1).long()
         low_logits = self.pixelcnn(self._onehot(y_low), features_low)
 
@@ -92,14 +77,8 @@ class PixelSeg(nn.Module):
         low, high, y_low = self(x, y)
         return F.cross_entropy(low, y_low) + F.cross_entropy(high, y)
 
-    # ---------- inference ----------
-
     @torch.no_grad()
     def _sample_low(self, features_low):
-        """Autoregressive sampling at low resolution.
-        Greedy speedup: when the sampled pixel is background, also accept the
-        argmax for subsequent positions that the model also predicts as background.
-        """
         B, _, H, W = features_low.shape
         y = torch.zeros(B, H, W, dtype=torch.long, device=features_low.device)
         total = H * W
@@ -113,6 +92,7 @@ class PixelSeg(nn.Module):
             pos += 1
 
             if (sample == 0).all():
+                # Most pixels are background, so skip easy background runs.
                 argmax_full = logits.argmax(dim=1).view(B, -1)
                 while pos < total and (argmax_full[:, pos] == 0).all():
                     nr, nc = pos // W, pos % W
@@ -122,7 +102,6 @@ class PixelSeg(nn.Module):
 
     @torch.no_grad()
     def sample(self, x):
-        """Draw one full-resolution stochastic mask. Returns (B, H, W) class indices."""
         features = self.unet(x)
         features_low = F.adaptive_avg_pool2d(features, LOW_RES)
         y_low = self._sample_low(features_low)

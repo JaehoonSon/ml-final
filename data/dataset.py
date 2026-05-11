@@ -1,17 +1,4 @@
-"""
-Pascal VOC 2012 reframed as binary segmentation: foreground (any object class) vs. background.
-    0  = background
-    1+ = foreground (collapsed from VOC classes 1-20)
-    255 (boundary) -> background
-
-Training augmentations match advML_lab2:
-    1.1x resize -> random crop to SIZE
-    horizontal flip (p=0.5)
-    brightness jitter   (p=0.5, factor in [0.8, 1.2])
-    contrast jitter     (p=0.5, factor in [0.8, 1.2])
-    ImageNet normalize
-Validation: deterministic resize + normalize, no augmentation.
-"""
+"""Pascal VOC as foreground/background masks."""
 
 import random
 
@@ -54,7 +41,6 @@ class VOCDataset(Dataset):
 
     @staticmethod
     def _augment(image, mask):
-        # upscale 1.1x then random crop to SIZE (joint on image + mask)
         up = int(SIZE * 1.1)
         image = image.resize((up, up), Image.BILINEAR)
         mask = mask.resize((up, up), Image.NEAREST)

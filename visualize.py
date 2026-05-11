@@ -1,10 +1,4 @@
-"""
-Qualitative comparison: a few val images, each shown as
-    Input | Ground Truth | Deterministic | Softmax sampling | PixelSeg
-
-    uv run python visualize.py
-    uv run python visualize.py --num-images 4 --pixelseg-tag pixelseg_lr1e-5
-"""
+"""Save side-by-side prediction examples."""
 
 import argparse
 from pathlib import Path
@@ -14,8 +8,8 @@ import numpy as np
 import torch
 
 from data.dataset import VOCDataset
-from models.deterministic import Deterministic
 from models.pixelseg import PixelSeg
+from models.unet_seg import UNetSeg
 
 IMG_MEAN = np.array([0.485, 0.456, 0.406])
 IMG_STD = np.array([0.229, 0.224, 0.225])
@@ -34,28 +28,41 @@ def overlay(image, mask, color=(1.0, 0.2, 0.2), alpha=0.5):
     return out
 
 
+def tag_title(tag):
+    prefix = "pixelseg_lr"
+    if tag.startswith(prefix):
+        return f"PixelSeg {tag[len(prefix):]}"
+    return f"PixelSeg {tag}"
+
+
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--num-images", type=int, default=4)
-    p.add_argument("--det-tag", type=str, default="det")
-    p.add_argument("--pixelseg-tag", type=str, default="pixelseg")
-    p.add_argument("--output", type=str, default="runs/figures/comparison.png")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num-images", type=int, default=4)
+    parser.add_argument("--det-tag", type=str, default="det")
+    parser.add_argument("--pixelseg-tag", type=str, default="pixelseg")
+    parser.add_argument("--pixelseg-tags", nargs="+", default=None,
+                        help="One or more PixelSeg run directories to compare. Overrides --pixelseg-tag.")
+    parser.add_argument("--output", type=str, default="runs/figures/comparison.png")
+    args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    pixelseg_tags = args.pixelseg_tags or [args.pixelseg_tag]
 
-    det = Deterministic().to(device)
-    det.load_state_dict(torch.load(f"runs/{args.det_tag}/best.pt", map_location=device))
-    det.eval()
+    unet = UNetSeg().to(device)
+    unet.load_state_dict(torch.load(f"runs/{args.det_tag}/best.pt", map_location=device))
+    unet.eval()
 
-    pixelseg = PixelSeg().to(device)
-    pixelseg.load_state_dict(torch.load(f"runs/{args.pixelseg_tag}/best.pt", map_location=device))
-    pixelseg.eval()
+    pixelseg_models = []
+    for tag in pixelseg_tags:
+        model = PixelSeg().to(device)
+        model.load_state_dict(torch.load(f"runs/{tag}/best.pt", map_location=device))
+        model.eval()
+        pixelseg_models.append(model)
 
     dataset = VOCDataset("val")
     indices = np.linspace(0, len(dataset) - 1, args.num_images).astype(int)
 
-    titles = ["Input", "Ground Truth", "Deterministic", "Softmax sampling", "PixelSeg"]
+    titles = ["Input", "GT", "U-Net", "Softmax"] + [tag_title(tag) for tag in pixelseg_tags]
     _, axes = plt.subplots(args.num_images, len(titles),
                            figsize=(len(titles) * 2.5, args.num_images * 2.5))
     if args.num_images == 1:
@@ -66,18 +73,17 @@ def main():
         x = image.unsqueeze(0).to(device)
 
         with torch.no_grad():
-            det_pred = det.predict_argmax(x)[0]
-            softmax_pred = det.sample_softmax(x)[0]
-            pixelseg_pred = pixelseg.sample(x)[0]
+            unet_pred = unet.predict(x)[0]
+            pixel_sample = unet.sample_pixels(x)[0]
+            pixelseg_preds = [model.sample(x)[0] for model in pixelseg_models]
 
         img_np = unnormalize(image)
         panels = [
             img_np,
             overlay(img_np, mask),
-            overlay(img_np, det_pred),
-            overlay(img_np, softmax_pred),
-            overlay(img_np, pixelseg_pred),
-        ]
+            overlay(img_np, unet_pred),
+            overlay(img_np, pixel_sample),
+        ] + [overlay(img_np, pred) for pred in pixelseg_preds]
 
         for col, panel in enumerate(panels):
             ax = axes[row, col]

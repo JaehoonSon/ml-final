@@ -1,24 +1,24 @@
-# PixelSeg-style Stochastic Segmentation on Pascal VOC (binary)
+# PixelSeg on Binary Pascal VOC
 
-Adapts PixelSeg (Zhang et al., ACM MM 2022) to Pascal VOC 2012 reframed as
-**binary** foreground/background segmentation. The question:
+This repo adapts PixelSeg (Zhang et al., ACM MM 2022) to Pascal VOC 2012 after
+collapsing the masks into foreground/background.
 
-> Can PixelSeg-style autoregressive mask sampling produce more spatially coherent
-> stochastic VOC masks than naive independent softmax sampling?
+The main thing we wanted to check was whether autoregressive mask sampling gives
+cleaner binary VOC samples than sampling each pixel independently from a U-Net
+softmax.
 
-VOC has one annotation per image, so we are **not** claiming to learn multiple
-plausible human annotations. We are testing whether modeling pixel-to-pixel
-dependencies in the output mask gives cleaner samples on natural images.
+VOC only has one annotation per image, so this is not a multi-annotator
+uncertainty experiment. The visual comparison matters as much as the raw IoU.
 
-## Three runs at a glance
+## Runs
 
 | Run | Model | Inference | Purpose |
 |---|---|---|---|
-| 1 | Deterministic U-Net | argmax (one mask) | Standard segmentation upper bound |
-| 2 | Same trained U-Net | sample softmax per pixel (independent) | The "noisy sampling" failure mode |
-| 3 | PixelSeg | autoregressive PixelCNN sampling | The proposed fix |
+| 1 | U-Net | argmax | standard segmentation baseline |
+| 2 | U-Net | per-pixel softmax samples | noisy stochastic baseline |
+| 3 | PixelSeg | PixelCNN mask samples | structured stochastic samples |
 
-Run 2 reuses Run 1's checkpoint — only the inference function changes.
+The softmax-sampling run uses the U-Net checkpoint; only inference changes.
 
 ## Reference baselines (advML_lab2, 21-class VOC)
 
@@ -40,23 +40,23 @@ comparable to our binary setup, but the metric protocol is identical.
 | TransUNet (100 epoch, weighted, lr 1e-4) | 82.66% | 45.33% |
 | **TransUNet (100 epoch, weighted, lr 1e-5)** | **91.13%** | **62.65%** |
 
-## Our results (binary VOC, val set, to fill in after training)
+## Results
 
-### Main comparison
+Binary VOC validation set:
 
 | Method | Pixel Accuracy | Mean IoU |
 |---|---:|---:|
-| Run 1: Deterministic U-Net (argmax) | TBD | TBD |
-| Run 2: Naive softmax sampling (16 samples) | TBD | TBD |
-| Run 3: PixelSeg autoregressive (16 samples) | TBD | TBD |
+| U-Net argmax | 83.33% | 62.27% |
+| U-Net softmax samples (16) | 77.19% | 55.06% |
+| PixelSeg, lr 1e-3 (16) | 81.87% | 62.14% |
 
-### PixelSeg learning-rate ablation
+PixelSeg learning-rate sweep:
 
-| PixelSeg variant | Pixel Accuracy | Mean IoU |
+| Learning rate | Pixel Accuracy | Mean IoU |
 |---|---:|---:|
-| lr 1e-3 | TBD | TBD |
-| lr 1e-4 | TBD | TBD |
-| lr 1e-5 | TBD | TBD |
+| 1e-3 | 81.87% | 62.14% |
+| 1e-4 | 79.74% | 57.32% |
+| 1e-5 | 74.04% | 39.71% |
 
 ## Project layout
 
@@ -64,23 +64,21 @@ comparable to our binary setup, but the metric protocol is identical.
 ml-final/
 ├── data/
 │   ├── prepare_voc.py        # torchvision download trigger
-│   └── dataset.py            # binarized VOC, 224x224, joint augmentations
+│   └── dataset.py            # binary VOC dataset
 ├── models/
-│   ├── unet.py               # shared backbone
-│   ├── deterministic.py      # Run 1 + Run 2
-│   └── pixelseg.py           # Run 3
-├── metrics.py                # ConfusionMatrix → PA, mIoU
+│   ├── unet.py
+│   ├── unet_seg.py
+│   └── pixelseg.py
+├── metrics.py
 ├── train.py                  # --model {det, pixelseg}
 ├── evaluate.py               # --mode {det, softmax, pixelseg}
-├── visualize.py              # basic side-by-side comparison figure
-└── visualize_stochastic.py   # samples grid + uncertainty heatmaps
+├── visualize.py
+└── visualize_stochastic.py
 ```
 
----
+# U-Net run
 
-# Section 1 — Computer A: Deterministic (Run 1 + Run 2)
-
-Trains the U-Net once and evaluates both argmax (Run 1) and naive softmax sampling (Run 2). Wall time: ~1 h training + ~5 min eval.
+Train once, then evaluate argmax and sampled predictions:
 
 ```bash
 uv sync && \
@@ -90,16 +88,13 @@ uv run python evaluate.py --mode det && \
 uv run python evaluate.py --mode softmax --num-samples 16
 ```
 
-**Outputs after this run finishes**:
 - `runs/det/best.pt` — checkpoint
-- `runs/det/results_det.json` — Run 1 metrics
-- `runs/det/results_softmax.json` — Run 2 metrics
+- `runs/det/results_det.json`
+- `runs/det/results_softmax.json`
 
----
+# PixelSeg runs
 
-# Section 2 — Computer B: PixelSeg (Run 3, three lr variants)
-
-Trains PixelSeg three times with different learning rates, then evaluates each. Wall time: ~9–15 h training + ~30–90 min eval.
+We trained three learning rates:
 
 ```bash
 uv sync && \
@@ -112,26 +107,27 @@ uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-4 --num-samples 16
 uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-5 --num-samples 16
 ```
 
-**Outputs after this run finishes**:
 - `runs/pixelseg_lr1e-3/best.pt` and `results_pixelseg.json`
 - `runs/pixelseg_lr1e-4/best.pt` and `results_pixelseg.json`
 - `runs/pixelseg_lr1e-5/best.pt` and `results_pixelseg.json`
 
----
+# Figures
 
-# Section 3 — After both computers finish: combine + visualize
-
-The visualization scripts need **both** the deterministic checkpoint and at least one PixelSeg checkpoint in the same `runs/` tree. Copy the missing folder over (e.g., from computer A → computer B), then run:
+The figure scripts expect the deterministic checkpoint and PixelSeg checkpoints
+under the same `runs/` directory.
 
 ```bash
-uv run python visualize.py --pixelseg-tag pixelseg_lr1e-5 && \
-uv run python visualize_stochastic.py --pixelseg-tag pixelseg_lr1e-5
+uv run python visualize.py \
+  --pixelseg-tags pixelseg_lr1e-3 pixelseg_lr1e-4 pixelseg_lr1e-5 \
+  --output runs/figures/comparison_all_pixelseg.png
+
+uv run python visualize_stochastic.py --pixelseg-tag pixelseg_lr1e-3
 ```
 
-Replace `pixelseg_lr1e-5` with whichever variant scored best. **Outputs**:
-- `runs/figures/comparison.png` — 4 images × [Input | GT | Det | Softmax | PixelSeg]
-- `runs/figures/samples.png` — 3 images × [Input | GT | softmax×4 | PixelSeg×4]
-- `runs/figures/uncertainty.png` — 3 images × [Input | GT | Softmax variance | PixelSeg variance]
+Files:
+- `runs/figures/comparison_all_pixelseg.png`
+- `runs/figures/samples.png`
+- `runs/figures/uncertainty.png`
 
 ### Quick rsync example
 
@@ -140,9 +136,9 @@ Replace `pixelseg_lr1e-5` with whichever variant scored best. **Outputs**:
 rsync -avz runs/det/ user@computer-B:/path/to/ml-final/runs/det/
 ```
 
-## Final claim we're testing
+## Takeaway
 
-> On Pascal VOC, PixelSeg-style autoregressive sampling does not necessarily
-> beat deterministic segmentation on raw IoU, but it produces more spatially
-> coherent stochastic masks than independent softmax sampling — meaning the
-> structured-output idea generalizes from medical to natural images.
+PixelSeg does not clearly beat the U-Net argmax mask on IoU, but the best run is
+close to it and much better than independent softmax sampling. The sample grids
+and variance heatmaps are the main evidence for whether the stochastic masks are
+actually cleaner.

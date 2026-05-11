@@ -1,9 +1,4 @@
-"""
-Train a model on binary Pascal VOC.
-
-    uv run python train.py --model det        # Run 1 deterministic baseline (also serves Run 2)
-    uv run python train.py --model pixelseg   # Run 3 PixelSeg-style autoregressive
-"""
+"""Train on binary Pascal VOC."""
 
 import argparse
 from pathlib import Path
@@ -13,19 +8,19 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from data.dataset import VOCDataset
-from models.deterministic import Deterministic
+from models.unet_seg import UNetSeg
 from models.pixelseg import PixelSeg
 
-MODELS = {"det": Deterministic, "pixelseg": PixelSeg}
+MODELS = {"det": UNetSeg, "pixelseg": PixelSeg}
 
 
-def run_epoch(model, loader, optimizer, device, train):
-    model.train(train)
+def run_epoch(model, loader, optimizer, device, is_train):
+    model.train(is_train)
     total, n = 0.0, 0
     for x, y in tqdm(loader, leave=False):
         x, y = x.to(device), y.to(device)
         loss = model.loss((x, y))
-        if train:
+        if is_train:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -35,14 +30,14 @@ def run_epoch(model, loader, optimizer, device, train):
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=MODELS.keys(), required=True)
-    p.add_argument("--epochs", type=int, default=100)
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--lr", type=float, default=1e-4)
-    p.add_argument("--tag", type=str, default=None,
-                   help="Custom run directory name. Defaults to the model name.")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=MODELS.keys(), required=True)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Custom run directory name. Defaults to the model name.")
+    args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = MODELS[args.model]().to(device)
@@ -59,9 +54,9 @@ def main():
     best = float("inf")
 
     for epoch in range(args.epochs):
-        train_loss = run_epoch(model, train_loader, optimizer, device, train=True)
+        train_loss = run_epoch(model, train_loader, optimizer, device, is_train=True)
         with torch.no_grad():
-            val_loss = run_epoch(model, val_loader, optimizer, device, train=False)
+            val_loss = run_epoch(model, val_loader, optimizer, device, is_train=False)
         print(f"epoch {epoch:3d} | train {train_loss:.4f} | val {val_loss:.4f}")
         if val_loss < best:
             best = val_loss

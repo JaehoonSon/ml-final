@@ -1,11 +1,4 @@
-"""
-Segmentation metrics computed from a running confusion matrix.
-Matches the evaluation in https://github.com/Lstsk/advML_lab2 so PixelSeg
-numbers are directly comparable to the U-Net / TransUNet baselines reported there.
-
-    Pixel Accuracy = sum(diag) / sum(matrix)
-    Mean IoU       = mean over classes of diag[c] / (row[c] + col[c] - diag[c])
-"""
+"""Segmentation metrics."""
 
 import torch
 
@@ -16,7 +9,6 @@ class ConfusionMatrix:
         self.mat = torch.zeros(num_classes, num_classes, dtype=torch.long)
 
     def update(self, pred: torch.Tensor, target: torch.Tensor):
-        """pred, target: integer tensors of any shape, values in [0, num_classes)."""
         pred = pred.flatten().cpu()
         target = target.flatten().cpu()
         keep = (target >= 0) & (target < self.n)

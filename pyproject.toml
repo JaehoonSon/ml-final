@@ -1,7 +1,7 @@
 [project]
 name = "pixelseg-repro"
 version = "0.1.0"
-description = "PixelSeg reproduction on LIDC-IDRI"
+description = "PixelSeg experiments on binary Pascal VOC"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",

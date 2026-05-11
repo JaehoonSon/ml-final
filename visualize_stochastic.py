@@ -1,13 +1,4 @@
-"""
-Stochastic comparison figures.
-
-Produces two PNGs in runs/figures/:
-    samples.png      — multiple samples per method side by side (shows coherence)
-    uncertainty.png  — per-pixel variance heatmaps for each stochastic method
-
-    uv run python visualize_stochastic.py
-    uv run python visualize_stochastic.py --num-images 4 --pixelseg-tag pixelseg_lr1e-5
-"""
+"""Save sample grids and variance heatmaps."""
 
 import argparse
 from pathlib import Path
@@ -17,8 +8,8 @@ import numpy as np
 import torch
 
 from data.dataset import VOCDataset
-from models.deterministic import Deterministic
 from models.pixelseg import PixelSeg
+from models.unet_seg import UNetSeg
 
 IMG_MEAN = np.array([0.485, 0.456, 0.406])
 IMG_STD = np.array([0.229, 0.224, 0.225])
@@ -37,14 +28,13 @@ def overlay(image, mask, color=(1.0, 0.2, 0.2), alpha=0.5):
     return out
 
 
-def gather_samples(det, pixelseg, dataset, indices, n_samples, device):
-    """For each image, draw n_samples from softmax sampling and from PixelSeg."""
+def collect_samples(unet, pixelseg, dataset, indices, n_samples, device):
     results = []
     for idx in indices:
         image, mask = dataset[idx]
         x = image.unsqueeze(0).to(device)
         with torch.no_grad():
-            softmax_samples = torch.stack([det.sample_softmax(x)[0] for _ in range(n_samples)])
+            softmax_samples = torch.stack([unet.sample_pixels(x)[0] for _ in range(n_samples)])
             pixelseg_samples = torch.stack([pixelseg.sample(x)[0] for _ in range(n_samples)])
         results.append({
             "image": image,
@@ -56,7 +46,6 @@ def gather_samples(det, pixelseg, dataset, indices, n_samples, device):
 
 
 def plot_samples_grid(results, output, n_show=4):
-    """Each row = one image. Columns: Input, GT, softmax × n_show, pixelseg × n_show."""
     n_rows = len(results)
     titles = ["Input", "GT"] + \
         [f"Softmax {i + 1}" for i in range(n_show)] + \
@@ -86,7 +75,6 @@ def plot_samples_grid(results, output, n_show=4):
 
 
 def plot_uncertainty(results, output):
-    """Per-pixel variance across samples, comparing softmax vs PixelSeg."""
     n_rows = len(results)
     titles = ["Input", "Ground Truth", "Softmax variance", "PixelSeg variance"]
     n_cols = len(titles)
@@ -120,22 +108,22 @@ def plot_uncertainty(results, output):
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--num-images", type=int, default=3)
-    p.add_argument("--num-samples", type=int, default=8,
-                   help="Samples drawn per method (used for variance computation).")
-    p.add_argument("--num-show", type=int, default=4,
-                   help="How many of those samples to display in samples.png.")
-    p.add_argument("--det-tag", type=str, default="det")
-    p.add_argument("--pixelseg-tag", type=str, default="pixelseg")
-    p.add_argument("--output-dir", type=str, default="runs/figures")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num-images", type=int, default=3)
+    parser.add_argument("--num-samples", type=int, default=8,
+                        help="Samples drawn per method (used for variance computation).")
+    parser.add_argument("--num-show", type=int, default=4,
+                        help="How many of those samples to display in samples.png.")
+    parser.add_argument("--det-tag", type=str, default="det")
+    parser.add_argument("--pixelseg-tag", type=str, default="pixelseg")
+    parser.add_argument("--output-dir", type=str, default="runs/figures")
+    args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    det = Deterministic().to(device)
-    det.load_state_dict(torch.load(f"runs/{args.det_tag}/best.pt", map_location=device))
-    det.eval()
+    unet = UNetSeg().to(device)
+    unet.load_state_dict(torch.load(f"runs/{args.det_tag}/best.pt", map_location=device))
+    unet.eval()
 
     pixelseg = PixelSeg().to(device)
     pixelseg.load_state_dict(torch.load(f"runs/{args.pixelseg_tag}/best.pt", map_location=device))
@@ -145,7 +133,7 @@ def main():
     indices = np.linspace(0, len(dataset) - 1, args.num_images).astype(int)
 
     print(f"Drawing {args.num_samples} samples per method × {args.num_images} images")
-    results = gather_samples(det, pixelseg, dataset, indices, args.num_samples, device)
+    results = collect_samples(unet, pixelseg, dataset, indices, args.num_samples, device)
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

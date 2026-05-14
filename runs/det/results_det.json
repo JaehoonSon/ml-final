@@ -1,7 +1,7 @@
 {
   "mode": "det",
   "inference": null,
-  "pixel_accuracy": 0.8336077332496643,
-  "mean_iou": 0.6354647874832153,
+  "pixel_accuracy": 0.8336071372032166,
+  "mean_iou": 0.6354727745056152,
   "num_samples": 1
 }

@@ -1,7 +1,7 @@
 {
   "mode": "softmax",
   "inference": null,
-  "pixel_accuracy": 0.7636545300483704,
-  "mean_iou": 0.5457751154899597,
+  "pixel_accuracy": 0.763655424118042,
+  "mean_iou": 0.5457853078842163,
   "num_samples": 16
 }

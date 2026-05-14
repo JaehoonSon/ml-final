@@ -1,0 +1,7 @@
+{
+  "mode": "pixelseg",
+  "inference": "greedy",
+  "pixel_accuracy": 0.8371179699897766,
+  "mean_iou": 0.6357868313789368,
+  "num_samples": 1
+}

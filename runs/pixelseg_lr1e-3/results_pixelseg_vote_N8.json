@@ -1,0 +1,7 @@
+{
+  "mode": "pixelseg",
+  "inference": "vote",
+  "pixel_accuracy": 0.8558353781700134,
+  "mean_iou": 0.6656644940376282,
+  "num_samples": 8
+}

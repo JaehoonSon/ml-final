@@ -71,63 +71,91 @@ ml-final/
 │   └── pixelseg.py
 ├── metrics.py
 ├── train.py                  # --model {det, pixelseg}
-├── evaluate.py               # --mode {det, softmax, pixelseg}
+├── evaluate.py               # --mode {det, softmax, pixelseg}, --inference {sample, greedy, vote}
+├── plot_history.py           # train/val loss curves from runs/<tag>/history.json
+├── plot_confusion.py         # confusion matrices per inference mode
 ├── visualize.py
 └── visualize_stochastic.py
 ```
 
-# U-Net run
+# Reproduce everything
 
-Train once, then evaluate argmax and sampled predictions:
+One copy-paste block that trains every model, evaluates every inference mode,
+runs the two hyperparameter sweeps (learning rate, vote sample count), and
+generates all figures. Each block can be re-run individually if interrupted.
 
 ```bash
-uv sync && \
-uv run python data/prepare_voc.py && \
-uv run python train.py --model det --epochs 100 --lr 1e-4 --batch-size 16 && \
-uv run python evaluate.py --mode det && \
+# ---------- Setup ----------
+uv sync
+uv run python data/prepare_voc.py
+
+# ---------- Train: U-Net baseline ----------
+uv run python train.py --model det --epochs 100 --lr 1e-4 --batch-size 16
+
+# ---------- Train: PixelSeg learning-rate sweep (hyperparameter #1) ----------
+for LR in 1e-3 1e-4 1e-5; do
+  uv run python train.py \
+    --model pixelseg --epochs 100 --batch-size 16 \
+    --lr $LR --tag pixelseg_lr$LR
+done
+
+# ---------- Loss curves (over/underfitting analysis) ----------
+uv run python plot_history.py runs/det
+uv run python plot_history.py \
+  runs/pixelseg_lr1e-3 runs/pixelseg_lr1e-4 runs/pixelseg_lr1e-5 \
+  --out runs/figures/pixelseg_loss_curves.png
+
+# ---------- Evaluate: U-Net (argmax + per-pixel softmax samples) ----------
+uv run python evaluate.py --mode det
 uv run python evaluate.py --mode softmax --num-samples 16
-```
 
-- `runs/det/best.pt` — checkpoint
-- `runs/det/results_det.json`
-- `runs/det/results_softmax.json`
+# ---------- Evaluate PixelSeg: every LR × every inference mode × every N ----------
+for TAG in pixelseg_lr1e-3 pixelseg_lr1e-4 pixelseg_lr1e-5; do
+  uv run python evaluate.py --mode pixelseg --inference sample \
+    --tag $TAG --num-samples 16
+  uv run python evaluate.py --mode pixelseg --inference greedy --tag $TAG
+  for N in 1 2 4 8 16 32; do
+    uv run python evaluate.py --mode pixelseg --inference vote \
+      --tag $TAG --num-samples $N
+  done
+done
 
-# PixelSeg runs
+# ---------- Confusion matrices ----------
+uv run python plot_confusion.py --mode det
+uv run python plot_confusion.py --mode softmax --num-samples 16
+for TAG in pixelseg_lr1e-3 pixelseg_lr1e-4 pixelseg_lr1e-5; do
+  uv run python plot_confusion.py --mode pixelseg        --tag $TAG --num-samples 16
+  uv run python plot_confusion.py --mode pixelseg_greedy --tag $TAG
+  uv run python plot_confusion.py --mode pixelseg_vote   --tag $TAG --num-samples 16
+done
 
-We trained three learning rates:
-
-```bash
-uv sync && \
-uv run python data/prepare_voc.py && \
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-3 --batch-size 16 --tag pixelseg_lr1e-3 && \
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-4 --batch-size 16 --tag pixelseg_lr1e-4 && \
-uv run python train.py --model pixelseg --epochs 100 --lr 1e-5 --batch-size 16 --tag pixelseg_lr1e-5 && \
-uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-3 --num-samples 16 && \
-uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-4 --num-samples 16 && \
-uv run python evaluate.py --mode pixelseg --tag pixelseg_lr1e-5 --num-samples 16
-```
-
-- `runs/pixelseg_lr1e-3/best.pt` and `results_pixelseg.json`
-- `runs/pixelseg_lr1e-4/best.pt` and `results_pixelseg.json`
-- `runs/pixelseg_lr1e-5/best.pt` and `results_pixelseg.json`
-
-# Figures
-
-The figure scripts expect the deterministic checkpoint and PixelSeg checkpoints
-under the same `runs/` directory.
-
-```bash
+# ---------- Qualitative figures ----------
 uv run python visualize.py \
   --pixelseg-tags pixelseg_lr1e-3 pixelseg_lr1e-4 pixelseg_lr1e-5 \
   --output runs/figures/comparison_all_pixelseg.png
-
 uv run python visualize_stochastic.py --pixelseg-tag pixelseg_lr1e-3
 ```
 
-Files:
-- `runs/figures/comparison_all_pixelseg.png`
-- `runs/figures/samples.png`
-- `runs/figures/uncertainty.png`
+### What you get
+
+Per-run files:
+- `runs/det/{best.pt, history.json, results_det.json, results_softmax.json}`
+- `runs/pixelseg_lr{1e-3,1e-4,1e-5}/{best.pt, history.json, results_pixelseg.json}`
+- `runs/pixelseg_lr1e-3/results_pixelseg_greedy.json`
+- `runs/pixelseg_lr1e-3/results_pixelseg_vote_N{1,2,4,8,16,32}.json`
+
+Figures:
+- `runs/det/loss_curve.png`, `runs/figures/pixelseg_loss_curves.png`
+- `runs/figures/confusion_*.png` (one per mode × tag)
+- `runs/figures/comparison_all_pixelseg.png`, `samples.png`, `uncertainty.png`
+
+### Inference modes (PixelSeg)
+
+| `--inference` | What it does | Predictions / image |
+|---|---|---|
+| `sample` (default) | N iid autoregressive samples, each contributes to the confusion matrix → E[IoU per sample] | N |
+| `greedy` | argmax at every PixelCNN step (joint-MAP approximation) — deterministic | 1 |
+| `vote` | N iid samples → per-pixel majority vote at high-res (marginal-mode estimate) | 1 |
 
 ### Quick rsync example
 

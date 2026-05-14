@@ -78,7 +78,7 @@ class PixelSeg(nn.Module):
         return F.cross_entropy(low, y_low) + F.cross_entropy(high, y)
 
     @torch.no_grad()
-    def _sample_low(self, features_low):
+    def _decode_low(self, features_low, greedy=False):
         B, _, H, W = features_low.shape
         y = torch.zeros(B, H, W, dtype=torch.long, device=features_low.device)
         total = H * W
@@ -86,12 +86,15 @@ class PixelSeg(nn.Module):
         while pos < total:
             r, c = pos // W, pos % W
             logits = self.pixelcnn(self._onehot(y), features_low)
-            probs = F.softmax(logits[:, :, r, c], dim=1)
-            sample = torch.multinomial(probs, 1).squeeze(1)
-            y[:, r, c] = sample
+            if greedy:
+                step = logits[:, :, r, c].argmax(dim=1)
+            else:
+                probs = F.softmax(logits[:, :, r, c], dim=1)
+                step = torch.multinomial(probs, 1).squeeze(1)
+            y[:, r, c] = step
             pos += 1
 
-            if (sample == 0).all():
+            if (step == 0).all():
                 # Most pixels are background, so skip easy background runs.
                 argmax_full = logits.argmax(dim=1).view(B, -1)
                 while pos < total and (argmax_full[:, pos] == 0).all():
@@ -101,10 +104,31 @@ class PixelSeg(nn.Module):
         return y
 
     @torch.no_grad()
-    def sample(self, x):
-        features = self.unet(x)
-        features_low = F.adaptive_avg_pool2d(features, LOW_RES)
-        y_low = self._sample_low(features_low)
+    def _high_from_low(self, x, features, y_low):
         y_low_up = F.interpolate(self._onehot(y_low), size=x.shape[-2:], mode="nearest")
         high_logits = self.target_head(torch.cat([features, y_low_up], dim=1))
         return high_logits.argmax(dim=1)
+
+    @torch.no_grad()
+    def sample(self, x):
+        features = self.unet(x)
+        features_low = F.adaptive_avg_pool2d(features, LOW_RES)
+        y_low = self._decode_low(features_low, greedy=False)
+        return self._high_from_low(x, features, y_low)
+
+    @torch.no_grad()
+    def predict_greedy(self, x):
+        features = self.unet(x)
+        features_low = F.adaptive_avg_pool2d(features, LOW_RES)
+        y_low = self._decode_low(features_low, greedy=True)
+        return self._high_from_low(x, features, y_low)
+
+    @torch.no_grad()
+    def predict_vote(self, x, n_samples):
+        features = self.unet(x)
+        features_low = F.adaptive_avg_pool2d(features, LOW_RES)
+        votes = torch.zeros(x.shape[0], *x.shape[-2:], device=x.device)
+        for _ in range(n_samples):
+            y_low = self._decode_low(features_low, greedy=False)
+            votes += self._high_from_low(x, features, y_low).float()
+        return (votes / n_samples > 0.5).long()

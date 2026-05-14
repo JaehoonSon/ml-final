@@ -18,6 +18,9 @@ from models.unet_seg import UNetSeg
 LABELS = ["background", "foreground"]
 
 
+PIXELSEG_MODES = ("pixelseg", "pixelseg_greedy", "pixelseg_vote")
+
+
 def load_model(mode, tag, device):
     if mode in ("det", "softmax"):
         model = UNetSeg().to(device)
@@ -32,11 +35,15 @@ def load_model(mode, tag, device):
     return model, run_dir
 
 
-def predict(model, mode, x):
+def predict(model, mode, x, num_samples):
     if mode == "det":
         return model.predict(x)
     if mode == "softmax":
         return model.sample_pixels(x)
+    if mode == "pixelseg_greedy":
+        return model.predict_greedy(x)
+    if mode == "pixelseg_vote":
+        return model.predict_vote(x, num_samples)
     return model.sample(x)
 
 
@@ -69,7 +76,11 @@ def plot_matrix(matrix, title, output):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["det", "softmax", "pixelseg"], required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["det", "softmax", "pixelseg", "pixelseg_greedy", "pixelseg_vote"],
+        required=True,
+    )
     parser.add_argument("--tag", default=None)
     parser.add_argument("--num-samples", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -82,16 +93,26 @@ def main():
                         shuffle=False, num_workers=4)
 
     cm = ConfusionMatrix(NUM_CLASSES)
-    n_passes = 1 if args.mode == "det" else args.num_samples
+    # greedy and vote already aggregate per image; only `pixelseg` (single sample)
+    # and `softmax` benefit from contributing N samples each to the confusion matrix.
+    if args.mode in ("det", "pixelseg_greedy", "pixelseg_vote"):
+        passes_per_image = 1
+    else:
+        passes_per_image = args.num_samples
+
     for x, y in tqdm(loader):
         x, y = x.to(device), y.to(device)
         with torch.no_grad():
-            for _ in range(n_passes):
-                cm.update(predict(model, args.mode, x), y)
+            for _ in range(passes_per_image):
+                cm.update(predict(model, args.mode, x, args.num_samples), y)
 
     tag = run_dir.name
-    output = Path(args.output or f"runs/figures/confusion_{args.mode}_{tag}.png")
-    plot_matrix(cm.mat.numpy(), f"{args.mode} ({tag})", output)
+    suffix = f"_N{args.num_samples}" if args.mode == "pixelseg_vote" else ""
+    output = Path(args.output or f"runs/figures/confusion_{args.mode}_{tag}{suffix}.png")
+    title = f"{args.mode} ({tag})"
+    if args.mode == "pixelseg_vote":
+        title += f", N={args.num_samples}"
+    plot_matrix(cm.mat.numpy(), title, output)
 
 
 if __name__ == "__main__":

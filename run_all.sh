@@ -7,6 +7,7 @@
 #   ./run_all.sh
 
 set -euo pipefail
+export PYTHONUNBUFFERED=1
 exec > >(tee -a run.log) 2>&1
 
 echo "=== started $(date) ==="

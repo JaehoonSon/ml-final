@@ -1,6 +1,7 @@
 """Train on binary Pascal VOC."""
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -53,11 +54,27 @@ def main():
     print(f"Saving checkpoints to {run_dir}")
     best = float("inf")
 
+    history = {
+        "model": args.model,
+        "hparams": {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+        },
+        "epochs": [],
+    }
+    history_path = run_dir / "history.json"
+
     for epoch in range(args.epochs):
         train_loss = run_epoch(model, train_loader, optimizer, device, is_train=True)
         with torch.no_grad():
             val_loss = run_epoch(model, val_loader, optimizer, device, is_train=False)
         print(f"epoch {epoch:3d} | train {train_loss:.4f} | val {val_loss:.4f}")
+        history["epochs"].append(
+            {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss}
+        )
+        with open(history_path, "w") as f:
+            json.dump(history, f, indent=2)
         if val_loss < best:
             best = val_loss
             torch.save(model.state_dict(), run_dir / "best.pt")
